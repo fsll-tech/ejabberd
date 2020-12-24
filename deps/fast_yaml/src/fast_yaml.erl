@@ -5,7 +5,7 @@
 %%% Created : 7 Aug 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -23,11 +23,15 @@
 
 -module(fast_yaml).
 
+-compile(no_native).
+
+-on_load(load_nif/0).
+
 %% API
--export([load_nif/0, decode/1, decode/2, start/0, stop/0,
+-export([decode/1, decode/2, start/0, stop/0,
          decode_from_file/1, decode_from_file/2, encode/1, format_error/1]).
 
--type option() :: {plain_as_atom, boolean()} | plain_as_atom.
+-type option() :: {plain_as_atom, boolean()} | plain_as_atom | {sane_scalars, boolean()} | sane_scalars.
 -type options() :: [option()].
 -type parser_error() :: {parser_error, binary(), integer(), integer()}.
 -type scanner_error() :: {scanner_error, binary(), integer(), integer()}.
@@ -35,6 +39,8 @@
                       memory_error | unexpected_error.
 
 -define(PLAIN_AS_ATOM, 1).
+-define(SANE_SCALARS, 2).
+-define(MAPS, 4).
 
 %%%===================================================================
 %%% API
@@ -47,15 +53,9 @@ stop() ->
 
 load_nif() ->
     SOPath = p1_nif_utils:get_so_path(?MODULE, [fast_yaml], "fast_yaml"),
-    case catch erlang:load_nif(SOPath, 0) of
-        ok ->
-            ok;
-        Err ->
-            error_logger:warning_msg("unable to load fast_yaml NIF: ~p~n", [Err]),
-            Err
-    end.
+    erlang:load_nif(SOPath, 0).
 
--spec format_error(atom() | yaml_error()) -> string().
+-spec format_error(atom() | yaml_error() | file:posix()) -> string().
 
 format_error({Tag, Reason, Line, Column}) when Tag == parser_error;
                                                Tag == scanner_error ->
@@ -66,7 +66,12 @@ format_error({Tag, Reason, Line, Column}) when Tag == parser_error;
 format_error(memory_error) ->
     "Memory error";
 format_error(Reason) when is_atom(Reason) ->
-    file:format_error(Reason);
+    case file:format_error(Reason) of
+	"unknown POSIX error" ->
+	    atom_to_list(Reason);
+	Res ->
+	    Res
+    end;
 format_error(_) ->
     "Unexpected error".
 
@@ -75,12 +80,14 @@ format_error(_) ->
 decode(Data) ->
     decode(Data, []).
 
--spec decode_from_file(file:filename()) -> {ok, term()} | {error, yaml_error()}.
+-spec decode_from_file(file:filename()) -> {ok, term()} |
+					   {error, yaml_error() | file:posix()}.
 
 decode_from_file(File) ->
     decode_from_file(File, []).
 
--spec decode_from_file(file:filename(), options()) -> {ok, term()} | {error, yaml_error()}.
+-spec decode_from_file(file:filename(), options()) -> {ok, term()} |
+						      {error, yaml_error() | file:posix()}.
 
 decode_from_file(File, Opts) ->
     case file:read_file(File) of
@@ -93,7 +100,10 @@ decode_from_file(File, Opts) ->
 -spec decode(iodata(), options()) -> {ok, term()} | {error, yaml_error()}.
 
 decode(Data, Opts) ->
-    nif_decode(Data, make_flags(Opts)).
+    try nif_decode(Data, make_flags(Opts))
+    catch error:{parser_error, _, _, _} = Reason ->
+	    {error, Reason}
+    end.
 
 -spec encode(term()) -> iolist().
 
@@ -118,12 +128,23 @@ encode(F, _) when is_float(F) ->
     io_lib:format("~f", [F]);
 encode(A, _) when is_atom(A) ->
     atom_to_list(A);
+                                                % http://erlang.org/doc/reference_manual/data_types.html#escape-sequences
 encode(B, _) when is_binary(B) ->
     [$",
      lists:map(
-       fun($") -> [$\\, $"];
-          (C) -> C
-       end, binary_to_list(B)),
+       fun ($\b) -> [$\\, "b"];  % $\b ==  "backspace"
+                                                %($\d) -> [$\\, "d"];  % $\d = "delete" % Encode work, but decode fail
+           ($\e) -> [$\\, "e"];  % $\e ==  "escape"
+           ($\f) -> [$\\, "f"];  % $\f ==  "from feed"
+           ($\n) -> [$\\, "n"];  % $\n == "new line"
+           ($\r) -> [$\\, "r"];  % $\r == "carriage return"
+           ($\s) -> [$\s];  % $\s ==  "space"
+           ($\t) -> [$\\, "t"];  % $\t ==  "tab"
+           ($\v) -> [$\\, "v"];  % $\v ==  "vertical tab"
+           ($") -> [$\\, $"];    % $"  ==  double quote
+           ($\\) -> [$\\, $\\];  % $\\ ==  backslash
+           (C) -> C
+       end, unicode:characters_to_list(B)),
      $"].
 
 encode_pair({K, V}, N) ->
@@ -139,6 +160,18 @@ make_flags([{plain_as_atom, false}|Opts]) ->
     make_flags(Opts);
 make_flags([plain_as_atom|Opts]) ->
     ?PLAIN_AS_ATOM bor make_flags(Opts);
+make_flags([{sane_scalars, true}|Opts]) ->
+    ?SANE_SCALARS bor make_flags(Opts);
+make_flags([{sane_scalars, false}|Opts]) ->
+    make_flags(Opts);
+make_flags([sane_scalars|Opts]) ->
+    ?SANE_SCALARS bor make_flags(Opts);
+make_flags([{maps, true}|Opts]) ->
+    ?MAPS bor make_flags(Opts);
+make_flags([{maps, false}|Opts]) ->
+    make_flags(Opts);
+make_flags([maps|Opts]) ->
+    ?MAPS bor make_flags(Opts);
 make_flags([Opt|Opts]) ->
     error_logger:warning_msg("fast_yaml: unknown option ~p", [Opt]),
     make_flags(Opts);
@@ -158,11 +191,24 @@ indent(N) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
-load_nif_test() ->
-    ?assertEqual(ok, load_nif()).
+test_file_path(File) ->
+    F1 = filename:join(["test", File]),
+    case filelib:is_file(F1) of
+        true -> F1;
+        _ -> filename:join(["..", "test", File])
+    end.
+
+temp_file_path() ->
+    case filelib:is_dir("test") of
+        true ->
+            filename:join(["test", "temp_test.yml"]);
+        _ ->
+            filename:join(["..", "test", "temp_test.yml"])
+    end.
 
 decode_test1_test() ->
-    FileName = filename:join(["..", "test", "test1.yml"]),
+    FileName = test_file_path("test1.yml"),
+    %?assertEqual(file:get_cwd(), "dupa"),
     ?assertEqual(
        {ok,[[{<<"Time">>,<<"2001-11-23 15:01:42 -5">>},
              {<<"User">>,<<"ed">>},
@@ -184,7 +230,7 @@ decode_test1_test() ->
        decode_from_file(FileName)).
 
 decode_test2_test() ->
-    FileName = filename:join(["..", "test", "test2.yml"]),
+    FileName = test_file_path("test2.yml"),
     ?assertEqual(
        {ok,[[[{step,[{instrument,<<"Lasik 2000">>},
                      {pulseEnergy,5.4},
@@ -203,7 +249,7 @@ decode_test2_test() ->
        decode_from_file(FileName, [plain_as_atom])).
 
 decode_test3_test() ->
-    FileName = filename:join(["..", "test", "test3.yml"]),
+    FileName = test_file_path("test3.yml"),
     ?assertEqual(
        {ok,[[{<<"a">>,123},
              {<<"b">>,<<"123">>},
@@ -216,11 +262,246 @@ decode_test3_test() ->
        decode_from_file(FileName)).
 
 decode_test4_test() ->
-    FileName = filename:join(["..", "test", "test4.yml"]),
+    FileName = test_file_path("test4.yml"),
     ?assertEqual(
        {ok,[[{<<"picture">>,
               <<"R0lGODlhDAAMAIQAAP//9/X\n17unp5WZmZgAAAOfn515eXv\n"
                 "Pz7Y6OjuDg4J+fn5OTk6enp\n56enmleECcgggoBADs=mZmE\n">>}]]},
        decode_from_file(FileName)).
+
+decode_test5_test() ->
+    FileName = test_file_path("test5.yml"),
+    ?assertEqual(
+        {ok,[[
+            {<<"Name">>,<<"Backslash">>},
+                {<<"Source">>,<<"\\\\\\\\">>}],
+            [{<<"Name">>,<<"Double_Quote">>},
+                {<<"Source">>,<<"\"\"">>}],
+            [{<<"Name">>,<<"Backslash_and_Double_Quote">>},
+                {<<"Source">>,<<"\"\\\"\"">>}],
+            [{<<"Name">>,<<"New_Line">>},
+                {<<"Source">>,<<"\\n">>}]]
+        },
+        decode_from_file(FileName)).
+
+
+decode_test6_test() ->
+    FileName = test_file_path("test6.yml"),
+    ?assertEqual(
+       {ok,[[{<<"ints">>, [1, 2, 3]},
+             {<<"value">>, true}
+            ],
+            [{<<"true">>, true},
+             {<<"false">>, false},
+             {<<"str">>, <<"123">>},
+             {<<"str2">>, <<"123">>},
+             {<<"int">>, 123},
+             {<<"null">>, undefined},
+             {<<"null2">>, undefined},
+             {<<"null3">>, undefined}
+            ],
+            [{<<"inbox">>,
+              [
+               {<<"enabled">>, true},
+               {<<"filters">>, [[{<<"icon">>, <<"inbox">>}, {<<"label">>, <<"Inbox">>}]]}
+              ]}]
+           ]
+       },
+       decode_from_file(FileName, [sane_scalars])).
+
+decode_test7_test() ->
+    FileName = test_file_path("test7.yml"),
+    ?assertEqual(
+       {ok,[#{<<"foo">> =>
+                  #{<<"true">> => true,
+                    <<"false">> => false,
+                    <<"str">> => <<"123">>,
+                    <<"str2">> => <<"123">>,
+                    <<"int">> => 123,
+                    <<"null">> => undefined
+                   }},
+            #{<<"inbox">> =>
+                  #{<<"enabled">> => true,
+                    <<"map">> => #{<<"value">> => 1},
+                    <<"height">> => 100,
+                    <<"filters">> =>
+                        [#{<<"icon">> => <<"inbox">>,
+                           <<"label">> => <<"Inbox">>
+                          }
+                        ]
+                   }
+             }]},
+       decode_from_file(FileName, [sane_scalars, maps])).
+
+decode_test8_test() ->
+    FileName = test_file_path("test8.yml"),
+    {ok, Contents} = file:read_file(FileName),
+    ?assertMatch({ok,[#{}]}, decode(Contents, [sane_scalars, maps])).
+
+encode_test1_test() ->
+    ?assertEqual(
+       list_to_binary(encode(<<"a">>)),
+       <<"\"a\"">>).
+
+encode_unicode_test1_test() ->
+    ?assertEqual(
+       unicode:characters_to_binary(encode(<<"☃"/utf8>>)),
+       <<"\"☃\""/utf8>>).
+
+encode_decode_backspace_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"abc\bdef">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_escape_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\en">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_from_feed_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\f\"">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_new_line_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\n">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_carriage_return_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"ref\r\n">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_space_test() ->
+    FileName = temp_file_path(),
+    Binary = <<" toto\stata \s ">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_tab_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\treturn True">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_vertical_tab_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\v  ok">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_simple_quote_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"'\"'">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_double_quote_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\"\"">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_backslash_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\\\\\\\\">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
+
+encode_decode_quote_and_backslash_test() ->
+    FileName = temp_file_path(),
+    Binary = <<"\"\\\"\"">>,
+    Encoded = encode([[{'Source', Binary}]]),
+    file:write_file(FileName, Encoded),
+    Decoded = decode_from_file(FileName, [plain_as_atom]),
+    file:delete(FileName),
+    {ok, [[[{'Source', DecodedBinary}]]]} = Decoded,
+    ?assertEqual(
+       DecodedBinary,
+       Binary
+      ).
 
 -endif.

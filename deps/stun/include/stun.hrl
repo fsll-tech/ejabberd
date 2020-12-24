@@ -5,7 +5,7 @@
 %%% Created :  8 Aug 2009 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -60,6 +60,7 @@
 -define(STUN_ATTR_XOR_PEER_ADDRESS, 16#0012).
 -define(STUN_ATTR_DATA, 16#0013).
 -define(STUN_ATTR_XOR_RELAYED_ADDRESS, 16#0016).
+-define(STUN_ATTR_REQUESTED_ADDRESS_FAMILY, 16#0017).
 -define(STUN_ATTR_EVEN_PORT, 16#0018).
 -define(STUN_ATTR_REQUESTED_TRANSPORT, 16#0019).
 -define(STUN_ATTR_DONT_FRAGMENT, 16#001a).
@@ -86,6 +87,7 @@
 	       'MESSAGE-INTEGRITY',
 	       'NONCE',
 	       'REALM',
+	       'REQUESTED-ADDRESS-FAMILY',
 	       'REQUESTED-TRANSPORT',
 	       'SOFTWARE',
 	       'UNKNOWN-ATTRIBUTES' = [],

@@ -5,7 +5,7 @@
 %%% Created :  7 Aug 2009 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -34,6 +34,12 @@
 	 pp/1]).
 
 -include("stun.hrl").
+
+-ifdef(USE_OLD_CRYPTO_HMAC).
+crypto_hmac(Type, Key, Data) -> crypto:hmac(Type, Key, Data).
+-else.
+crypto_hmac(Type, Key, Data) -> crypto:mac(hmac, Type, Key, Data).
+-endif.
 
 %%====================================================================
 %% API
@@ -104,7 +110,7 @@ encode(#stun{class = Class,
 		     end,
 	    Data = <<0:2, Type:14, (Len+24):16, Magic:32,
 		    TrID:96, Attrs/binary>>,
-	    MessageIntegrity = crypto:hmac(sha, NewKey, Data),
+	    MessageIntegrity = crypto_hmac(sha, NewKey, Data),
 	    <<Data/binary, ?STUN_ATTR_MESSAGE_INTEGRITY:16,
 	     20:16, MessageIntegrity/binary>>;
        true ->
@@ -114,8 +120,8 @@ encode(#stun{class = Class,
 
 add_fingerprint(<<T:16, L:16, Tail/binary>>) ->
     Data = <<T:16, (L+8):16, Tail/binary>>,
-    CRC32 = erlang:crc32(Data),
-    <<Data/binary, ?STUN_ATTR_FINGERPRINT:16, 4:16, CRC32:32>>.
+    Fingerprint = erlang:crc32(Data) bxor 16#5354554e,
+    <<Data/binary, ?STUN_ATTR_FINGERPRINT:16, 4:16, Fingerprint:32>>.
 
 check_integrity(#stun{raw = Raw, 'MESSAGE-INTEGRITY' = MI}, Key)
   when is_binary(Raw), is_binary(MI), Key /= undefined ->
@@ -125,7 +131,7 @@ check_integrity(#stun{raw = Raw, 'MESSAGE-INTEGRITY' = MI}, Key)
 		 _ ->
 		     Key
 	     end,
-    crypto:hmac(sha, NewKey, Raw) == MI;
+    crypto_hmac(sha, NewKey, Raw) == MI;
 check_integrity(_Msg, _Key) ->
     false.
 
@@ -145,8 +151,10 @@ error(405) -> {405, <<"Method Not Allowed">>};
 error(420) -> {420, <<"Unknown Attribute">>};
 error(437) -> {437, <<"Allocation Mismatch">>};
 error(438) -> {438, <<"Stale Nonce">>};
+error(440) -> {440, <<"Address Family not Supported">>};
 error(441) -> {441, <<"Wrong Credentials">>};
 error(442) -> {442, <<"Unsupported Transport Protocol">>};
+error(443) -> {443, <<"Peer Address Family Mismatch">>};
 error(486) -> {486, <<"Allocation Quota Reached">>};
 error(500) -> {500, <<"Server Error">>};
 error(508) -> {508, <<"Insufficient Capacity">>};
@@ -193,6 +201,7 @@ enc_attrs(Msg) ->
 		    Msg#stun.'XOR-RELAYED-ADDRESS'),
        enc_xor_peer_addr(Msg#stun.magic, Msg#stun.trid,
 			 Msg#stun.'XOR-PEER-ADDRESS'),
+       enc_req_family(Msg#stun.'REQUESTED-ADDRESS-FAMILY'),
        enc_req_trans(Msg#stun.'REQUESTED-TRANSPORT'),
        enc_attr(?STUN_ATTR_DATA, Msg#stun.'DATA'),
        enc_df(Msg#stun.'DONT-FRAGMENT'),
@@ -242,6 +251,12 @@ dec_attr(?STUN_ATTR_XOR_PEER_ADDRESS, Val, Msg) ->
     AddrPort = dec_xor_addr(Val, Msg),
     Tail = Msg#stun.'XOR-PEER-ADDRESS',
     Msg#stun{'XOR-PEER-ADDRESS' = [AddrPort|Tail]};
+dec_attr(?STUN_ATTR_REQUESTED_ADDRESS_FAMILY, Val, Msg) ->
+    Family = case Val of
+		 <<1:8, _:3/binary>> -> ipv4;
+		 <<2:8, _:3/binary>> -> ipv6
+	     end,
+    Msg#stun{'REQUESTED-ADDRESS-FAMILY' = Family};
 dec_attr(?STUN_ATTR_REQUESTED_TRANSPORT, Val, Msg) ->
     <<ProtoInt, _:3/binary>> = Val,
     Proto = case ProtoInt of
@@ -342,6 +357,13 @@ enc_uint32(_Type, undefined) ->
     <<>>;
 enc_uint32(Type, Seconds) ->
     enc_attr(Type, <<Seconds:32>>).
+
+enc_req_family(undefined) ->
+    <<>>;
+enc_req_family(ipv4) ->
+    enc_attr(?STUN_ATTR_REQUESTED_ADDRESS_FAMILY, <<1, 0:24>>);
+enc_req_family(ipv6) ->
+    enc_attr(?STUN_ATTR_REQUESTED_ADDRESS_FAMILY, <<2, 0:24>>).
 
 enc_req_trans(undefined) ->
     <<>>;

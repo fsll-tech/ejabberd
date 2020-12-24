@@ -10,7 +10,7 @@
 -export([option/3]).
 
 %% Networking
--export([socket/1]).
+-export([socket/2, close/1, controlling_process/2, starttls/2]).
 -export([send/2, send_int/2, send_msg/3]).
 -export([recv_msg/2, recv_msg/1, recv_byte/2, recv_byte/1]).
 
@@ -29,6 +29,7 @@
 -export([pass_plain/1, pass_md5/3]).
 -import(erlang, [md5/1]).
 -export([hexlist/2]).
+-include_lib("kernel/include/inet.hrl").
 
 %% Lookup key in a plist stored in process dictionary under 'options'.
 %% Default is returned if there is no value for Key in the plist.
@@ -43,40 +44,61 @@ option(Opts, Key, Default) ->
     end.
 
 
-%% Open a TCP connection
-socket({tcp, Host, Port}) ->
-    gen_tcp:connect(Host, Port, [{active, false}, binary, {packet, raw}], 5000).
+%% Open a connection
+socket({Host, Port}, Timeout) ->
+    case connect(Host, Port, Timeout) of
+	{ok, Sock} ->
+	    {ok, {gen_tcp, Sock}};
+	{error, _} = Err ->
+	    Err
+    end.
 
-send(Sock, Packet) ->
-    gen_tcp:send(Sock, Packet).
-send_int(Sock, Int) ->
+close({Mod, Sock}) ->
+    Mod:close(Sock).
+
+controlling_process({Mod, Sock}, Owner) ->
+    Mod:controlling_process(Sock, Owner).
+
+starttls({gen_tcp, Sock}, Opts) ->
+    inet:setopts(Sock, [{active, once}]),
+    case ssl:connect(Sock, Opts, 5000) of
+	{ok, SSLSock} ->
+	    ssl:setopts(SSLSock, [{active, false}]),
+	    {ok, {ssl, SSLSock}};
+	{error, _} = Err ->
+	    Err
+    end.
+
+send({Mod, Sock}, Packet) ->
+    Mod:send(Sock, Packet).
+send_int({Mod, Sock}, Int) ->
     Packet = <<Int:32/integer>>,
-    gen_tcp:send(Sock, Packet).
+    Mod:send(Sock, Packet).
 
-send_msg(Sock, Code, Packet) when is_binary(Packet) ->
+send_msg({Mod, Sock}, Code, Packet) when is_binary(Packet) ->
     Len = size(Packet) + 4,
     Msg = <<Code:8/integer, Len:4/integer-unit:8, Packet/binary>>,
-    gen_tcp:send(Sock, Msg).
+    Mod:send(Sock, Msg).
 
-recv_msg(Sock, Timeout) ->
-    {ok, Head} = gen_tcp:recv(Sock, 5, Timeout),
+recv_msg({Mod, Sock}, Timeout) ->
+    {ok, Head} = Mod:recv(Sock, 5, Timeout),
     <<Code:8/integer, Size:4/integer-unit:8>> = Head,
     %%io:format("Code: ~p, Size: ~p~n", [Code, Size]),
     if 
 	Size > 4 ->
-	    {ok, Packet} = gen_tcp:recv(Sock, Size-4, Timeout),
+	    {ok, Packet} = Mod:recv(Sock, Size-4, Timeout),
 	    {ok, Code, Packet};
 	true ->
 	    {ok, Code, <<>>}
     end.
-recv_msg(Sock) ->
-    recv_msg(Sock, infinity).
+recv_msg({Mod, Sock}) ->
+    recv_msg({Mod, Sock}, infinity).
 
 
-recv_byte(Sock) ->
-    recv_byte(Sock, infinity).
-recv_byte(Sock, Timeout) ->
-    case gen_tcp:recv(Sock, 1, Timeout) of
+recv_byte({Mod, Sock}) ->
+    recv_byte({Mod, Sock}, infinity).
+recv_byte({Mod, Sock}, Timeout) ->
+    case Mod:recv(Sock, 1, Timeout) of
 	{ok, <<Byte:1/integer-unit:8>>} ->
 	    {ok, Byte};
 	E={error, _Reason} ->
@@ -222,10 +244,10 @@ decode_col({_Name, _Format, _ColNumber, int2, _Size, _Modifier, _TableOID}, Valu
     <<Int:16/integer>> = Value,
     {int2, integer_to_binary(Int)};
 decode_col({_Name, _Format, _ColNumber, int4, _Size, _Modifier, _TableOID}, Value, _AsBin) ->
-    <<Int:32/integer>> = Value,
+    <<Int:32/signed-integer>> = Value,
     {int4, integer_to_binary(Int)};
 decode_col({_Name, _Format, _ColNumber, int8, _Size, _Modifier, _TableOID}, Value, _AsBin) ->
-    <<Int:64/integer>> = Value,
+    <<Int:64/signed-integer>> = Value,
     {int8, integer_to_binary(Int)};
 decode_col({_Name, _Format, _ColNumber, numeric, _Size, _Modifier, _TableOID}, Value, _AsBin) ->
     N = decode_numeric(Value),
@@ -374,3 +396,64 @@ decode_numeric_digits1(<<>>, _Weight, Res) ->
 decode_numeric_digits1(<<D:16/unsigned, Data/binary>>, Weight, Res) ->
     decode_numeric_digits1(Data, Weight - 1,
                            Res + D * math:pow(?NBASE, Weight)).
+
+%%--------------------------------------------------------------------
+%% Connecting stuff
+%%--------------------------------------------------------------------
+connect(Host, Port, Timeout) ->
+    case lookup(Host, Timeout) of
+	{ok, AddrsFamilies} ->
+	    do_connect(AddrsFamilies, Port, Timeout, {error, nxdomain});
+	{error, _} = Err ->
+	    Err
+    end.
+
+do_connect([{IP, Family}|AddrsFamilies], Port, Timeout, _Err) ->
+    case gen_tcp:connect(IP, Port, [{active, false}, binary,
+				    {packet, raw}, Family], Timeout) of
+	{ok, Sock} ->
+	    {ok, Sock};
+	{error, _} = Err ->
+	    do_connect(AddrsFamilies, Port, Timeout, Err)
+    end;
+do_connect([], _Port, _Timeout, Err) ->
+    Err.
+
+lookup(Host, Timeout) ->
+    case inet:parse_address(Host) of
+	{ok, IP} ->
+	    {ok, [{IP, get_addr_type(IP)}]};
+	{error, _} ->
+	    do_lookup([{Host, Family} || Family <- [inet6, inet]],
+		      Timeout, [], {error, nxdomain})
+    end.
+
+do_lookup([{Host, Family}|HostFamilies], Timeout, AddrFamilies, Err) ->
+    case inet:gethostbyname(Host, Family, Timeout) of
+	{ok, HostEntry} ->
+	    Addrs = host_entry_to_addrs(HostEntry),
+	    AddrFamilies1 = [{Addr, Family} || Addr <- Addrs],
+	    do_lookup(HostFamilies, Timeout,
+		      AddrFamilies ++ AddrFamilies1,
+		      Err);
+	{error, _} = Err1 ->
+	    do_lookup(HostFamilies, Timeout, AddrFamilies, Err1)
+    end;
+do_lookup([], _Timeout, [], Err) ->
+    Err;
+do_lookup([], _Timeout, AddrFamilies, _Err) ->
+    {ok, AddrFamilies}.
+
+host_entry_to_addrs(#hostent{h_addr_list = AddrList}) ->
+    lists:filter(
+      fun(Addr) ->
+	      try get_addr_type(Addr) of
+		  _ -> true
+	      catch _:badarg ->
+		      false
+	      end
+      end, AddrList).
+
+get_addr_type({_, _, _, _}) -> inet;
+get_addr_type({_, _, _, _, _, _, _, _}) -> inet6;
+get_addr_type(_) -> erlang:error(badarg).

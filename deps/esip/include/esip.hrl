@@ -1,6 +1,6 @@
 %%%----------------------------------------------------------------------
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -47,3 +47,9 @@
 		     addr :: {inet:ip_address(), inet:port_number()},
 		     peer :: {inet:ip_address(), inet:port_number()},
 		     pid  :: pid()}).
+
+-type sip() :: #sip{}.
+-type uri() :: #uri{}.
+-type via() :: #via{}.
+-type dialog_id() :: #dialog_id{}.
+-type sip_socket() :: #sip_socket{}.

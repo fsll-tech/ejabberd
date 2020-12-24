@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+ * Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -101,6 +101,9 @@ static ssl_option_t ssl_options[] = {
 #endif
 #if defined(SSL_OP_NO_TLSv1_2)
 	{"no_tlsv1_2", SSL_OP_NO_TLSv1_2},
+#endif
+#if defined(SSL_OP_NO_TLSv1_3)
+  {"no_tlsv1_3", SSL_OP_NO_TLSv1_3},
 #endif
 #if defined(SSL_OP_PKCS1_CHECK_1)
 	{"pkcs1_check_1", SSL_OP_PKCS1_CHECK_1},

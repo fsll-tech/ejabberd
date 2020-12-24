@@ -1,4 +1,6 @@
-%% Copyright (c) 2011-2012 Basho Technologies, Inc.  All Rights Reserved.
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2011-2017 Basho Technologies, Inc.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -13,6 +15,8 @@
 %% KIND, either express or implied.  See the License for the
 %% specific language governing permissions and limitations
 %% under the License.
+%%
+%% -------------------------------------------------------------------
 
 %% @doc Lager crash log writer. This module implements a gen_server which writes
 %% error_logger error messages out to a file in their original format. The
@@ -42,42 +46,45 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
         code_change/3]).
 
--export([start_link/5, start/5]).
+-export([start_link/6, start/6]).
 
 -record(state, {
         name :: string(),
-        fd :: pid(),
-        inode :: integer(),
+        fd :: pid() | undefined,
+        inode :: integer() | undefined,
+        ctime :: file:date_time() | undefined,
         fmtmaxbytes :: integer(),
         size :: integer(),
         date :: undefined | string(),
         count :: integer(),
-        flap=false :: boolean()
+        flap=false :: boolean(),
+        rotator :: atom()
 }).
 
 %% @private
-start_link(Filename, MaxBytes, Size, Date, Count) ->
+start_link(Filename, MaxBytes, Size, Date, Count, Rotator) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [Filename, MaxBytes,
-            Size, Date, Count], []).
+            Size, Date, Count, Rotator], []).
 
 %% @private
-start(Filename, MaxBytes, Size, Date, Count) ->
+start(Filename, MaxBytes, Size, Date, Count, Rotator) ->
     gen_server:start({local, ?MODULE}, ?MODULE, [Filename, MaxBytes, Size,
-            Date, Count], []).
+            Date, Count, Rotator], []).
 
 %% @private
-init([RelFilename, MaxBytes, Size, Date, Count]) ->
+init([RelFilename, MaxBytes, Size, Date, Count, Rotator]) ->
     Filename = lager_util:expand_path(RelFilename),
-    case lager_util:open_logfile(Filename, false) of
-        {ok, {FD, Inode, _}} ->
+    case Rotator:open_logfile(Filename, false) of
+        {ok, {FD, Inode, Ctime, _Size}} ->
             schedule_rotation(Date),
-            {ok, #state{name=Filename, fd=FD, inode=Inode,
-                    fmtmaxbytes=MaxBytes, size=Size, count=Count, date=Date}};
+            {ok, #state{name=Filename, fd=FD, inode=Inode, ctime=Ctime,
+                    fmtmaxbytes=MaxBytes, size=Size, count=Count, date=Date,
+                    rotator=Rotator}};
         {error, Reason} ->
-            ?INT_LOG(error, "Failed to open crash log file ~s with error: ~s",
+            ?INT_LOG(error, "Failed to open crash log file ~ts with error: ~s",
                 [Filename, file:format_error(Reason)]),
             {ok, #state{name=Filename, fmtmaxbytes=MaxBytes, flap=true,
-                    size=Size, count=Count, date=Date}}
+                    size=Size, count=Count, date=Date, rotator=Rotator}}
     end.
 
 %% @private
@@ -95,8 +102,8 @@ handle_cast(_Request, State) ->
     {noreply, State}.
 
 %% @private
-handle_info(rotate, #state{name=Name, count=Count, date=Date} = State) ->
-    _ = lager_util:rotate_logfile(Name, Count),
+handle_info(rotate, #state{name=Name, count=Count, date=Date, rotator=Rotator} = State) ->
+    _ = Rotator:rotate_logfile(Name, Count),
     schedule_rotation(Date),
     {noreply, State};
 handle_info(_Info, State) ->
@@ -119,7 +126,7 @@ schedule_rotation(Date) ->
 %% ===== Begin code lifted from riak_err =====
 
 -spec limited_fmt(string(), list(), integer()) -> iolist().
-%% @doc Format Fmt and Args similar to what io_lib:format/2 does but with 
+%% @doc Format Fmt and Args similar to what io_lib:format/2 does but with
 %%      limits on how large the formatted string may be.
 %%
 %% If the Args list's size is larger than TermMaxSize, then the
@@ -182,8 +189,8 @@ sasl_limited_str(progress, Report, FmtMaxBytes) ->
 sasl_limited_str(crash_report, Report, FmtMaxBytes) ->
     lager_stdlib:proc_lib_format(Report, FmtMaxBytes).
 
-do_log({log, Event}, #state{name=Name, fd=FD, inode=Inode, flap=Flap,
-        fmtmaxbytes=FmtMaxBytes, size=RotSize, count=Count} = State) ->
+do_log({log, Event}, #state{name=Name, fd=FD, inode=Inode, ctime=Ctime, flap=Flap,
+        fmtmaxbytes=FmtMaxBytes, size=RotSize, count=Count, rotator=Rotator} = State) ->
     %% borrowed from riak_err
     {ReportStr, Pid, MsgStr, _ErrorP} = case Event of
         {error, _GL, {Pid1, Fmt, Args}} ->
@@ -198,11 +205,11 @@ do_log({log, Event}, #state{name=Name, fd=FD, inode=Inode, flap=Flap,
     if ReportStr == ignore ->
             {ok, State};
         true ->
-            case lager_util:ensure_logfile(Name, FD, Inode, false) of
-                {ok, {_, _, Size}} when RotSize /= 0, Size > RotSize ->
-                    _ = lager_util:rotate_logfile(Name, Count),
+            case Rotator:ensure_logfile(Name, FD, Inode, Ctime, false) of
+                {ok, {_FD, _Inode, _Ctime, Size}} when RotSize /= 0, Size > RotSize ->
+                    _ = Rotator:rotate_logfile(Name, Count),
                     handle_cast({log, Event}, State);
-                {ok, {NewFD, NewInode, _Size}} ->
+                {ok, {NewFD, NewInode, NewCtime, _Size}} ->
                     {Date, TS} = lager_util:format_time(
                         lager_stdlib:maybe_utc(erlang:localtime())),
                     Time = [Date, " ", TS," =", ReportStr, "====\n"],
@@ -210,20 +217,20 @@ do_log({log, Event}, #state{name=Name, fd=FD, inode=Inode, flap=Flap,
                     Msg = io_lib:format("~s~s~s", [Time, MsgStr, NodeSuffix]),
                     case file:write(NewFD, unicode:characters_to_binary(Msg)) of
                         {error, Reason} when Flap == false ->
-                            ?INT_LOG(error, "Failed to write log message to file ~s: ~s",
+                            ?INT_LOG(error, "Failed to write log message to file ~ts: ~s",
                                 [Name, file:format_error(Reason)]),
-                            {ok, State#state{fd=NewFD, inode=NewInode, flap=true}};
+                            {ok, State#state{fd=NewFD, inode=NewInode, ctime=NewCtime, flap=true}};
                         ok ->
-                            {ok, State#state{fd=NewFD, inode=NewInode, flap=false}};
+                            {ok, State#state{fd=NewFD, inode=NewInode, ctime=NewCtime, flap=false}};
                         _ ->
-                            {ok, State#state{fd=NewFD, inode=NewInode}}
+                            {ok, State#state{fd=NewFD, inode=NewInode, ctime=NewCtime}}
                     end;
                 {error, Reason} ->
                     case Flap of
                         true ->
                             {ok, State};
                         _ ->
-                            ?INT_LOG(error, "Failed to reopen crash log ~s with error: ~s",
+                            ?INT_LOG(error, "Failed to reopen crash log ~ts with error: ~s",
                                 [Name, file:format_error(Reason)]),
                             {ok, State#state{flap=true}}
                     end
@@ -236,105 +243,140 @@ do_log({log, Event}, #state{name=Name, fd=FD, inode=Inode, flap=Flap,
 filesystem_test_() ->
     {foreach,
         fun() ->
-                file:write_file("crash_test.log", ""),
-                error_logger:tty(false),
-                application:load(lager),
-                application:set_env(lager, handlers, [{lager_test_backend, info}]),
-                application:set_env(lager, error_logger_redirect, true),
-                application:unset_env(lager, crash_log),
-                lager:start(),
-                timer:sleep(100),
-                lager_test_backend:flush()
+            {ok, TestDir} = lager_util:create_test_dir(),
+            CrashLog = filename:join(TestDir, "crash_test.log"),
+            ok = lager_util:safe_write_file(CrashLog, []),
+            ok = error_logger:tty(false),
+            ok = lager_util:safe_application_load(lager),
+            ok = application:set_env(lager, handlers, [{lager_test_backend, info}]),
+            ok = application:set_env(lager, error_logger_redirect, true),
+            ok = application:unset_env(lager, crash_log),
+            ok = lager:start(),
+            ok = timer:sleep(1000),
+            ok = lager_test_backend:flush(),
+            CrashLog
         end,
-        fun(_) ->
-                case whereis(lager_crash_log) of
-                    P when is_pid(P) ->
-                        exit(P, kill);
-                    _ -> ok
-                end,
-                file:delete("crash_test.log"),
-                application:stop(lager),
-                application:stop(goldrush),
-                error_logger:tty(true)
-        end,
-        [
+        fun(_CrashLog) ->
+            case whereis(lager_crash_log) of
+                P when is_pid(P) ->
+                    gen_server:stop(P);
+                _ ->
+                    ok
+            end,
+            ok = application:stop(lager),
+            ok = application:stop(goldrush),
+            ok = lager_util:delete_test_dir(),
+            ok = error_logger:tty(true)
+        end, [
+        fun(CrashLog) ->
             {"under normal circumstances, file should be opened",
-                fun() ->
-                        {ok, _} = ?MODULE:start_link("crash_test.log", 65535, 0, undefined, 0),
-                        _ = gen_event:which_handlers(error_logger),
-                        sync_error_logger:error_msg("Test message\n"),
-                        {ok, Bin} = file:read_file("crash_test.log"),
-                        ?assertMatch([_, "Test message\n"], re:split(Bin, "\n", [{return, list}, {parts, 2}]))
-                end
-            },
+            fun() ->
+                {ok, _} = ?MODULE:start_link(CrashLog, 65535, 0, undefined, 0, lager_rotator_default),
+                _ = gen_event:which_handlers(error_logger),
+                sync_error_logger:error_msg("Test message\n"),
+                {ok, Bin} = file:read_file(CrashLog),
+                ?assertMatch([_, "Test message\n"], re:split(Bin, "\n", [{return, list}, {parts, 2}]))
+            end}
+        end,
+        fun(CrashLog) ->
             {"file can't be opened on startup triggers an error message",
-                fun() ->
-                        {ok, FInfo} = file:read_file_info("crash_test.log"),
-                        file:write_file_info("crash_test.log", FInfo#file_info{mode = 0}),
-                        {ok, _} = ?MODULE:start_link("crash_test.log", 65535, 0, undefined, 0),
-                        ?assertEqual(1, lager_test_backend:count()),
-                        {_Level, _Time, Message,_Metadata} = lager_test_backend:pop(),
-                        ?assertEqual("Failed to open crash log file crash_test.log with error: permission denied", lists:flatten(Message))
-                end
-            },
+            fun() ->
+                {ok, FInfo0} = file:read_file_info(CrashLog, [raw]),
+                FInfo1 = FInfo0#file_info{mode = 0},
+                ?assertEqual(ok, file:write_file_info(CrashLog, FInfo1)),
+                {ok, _} = ?MODULE:start_link(CrashLog, 65535, 0, undefined, 0, lager_rotator_default),
+                % Note: required on win32, do this early to prevent subsequent failures
+                % from preventing cleanup
+                ?assertEqual(ok, file:write_file_info(CrashLog, FInfo0)),
+                ?assertEqual(1, lager_test_backend:count()),
+                {_Level, _Time, Message,_Metadata} = lager_test_backend:pop(),
+                ?assertEqual(
+                    "Failed to open crash log file " ++ CrashLog ++ " with error: permission denied",
+                    lists:flatten(Message))
+            end}
+        end,
+        fun(CrashLog) ->
             {"file that becomes unavailable at runtime should trigger an error message",
-                fun() ->
-                        {ok, _} = ?MODULE:start_link("crash_test.log", 65535, 0, undefined, 0),
+            fun() ->
+                case os:type() of
+                    {win32, _} ->
+                        % Note: test is skipped on win32 due to the fact that a file can't be deleted or renamed
+                        % while a process has an open file handle referencing it
+                        ok;
+                    _ ->
+                        {ok, _} = ?MODULE:start_link(CrashLog, 65535, 0, undefined, 0, lager_rotator_default),
                         ?assertEqual(0, lager_test_backend:count()),
                         sync_error_logger:error_msg("Test message\n"),
                         _ = gen_event:which_handlers(error_logger),
                         ?assertEqual(1, lager_test_backend:count()),
-                        file:delete("crash_test.log"),
-                        file:write_file("crash_test.log", ""),
-                        {ok, FInfo} = file:read_file_info("crash_test.log"),
-                        file:write_file_info("crash_test.log", FInfo#file_info{mode = 0}),
+                        ?assertEqual(ok, file:delete(CrashLog)),
+                        ?assertEqual(ok, lager_util:safe_write_file(CrashLog, "")),
+                        {ok, FInfo0} = file:read_file_info(CrashLog, [raw]),
+                        FInfo1 = FInfo0#file_info{mode = 0},
+                        ?assertEqual(ok, file:write_file_info(CrashLog, FInfo1)),
                         sync_error_logger:error_msg("Test message\n"),
                         _ = gen_event:which_handlers(error_logger),
+                        % Note: required on win32, do this early to prevent subsequent failures
+                        % from preventing cleanup
+                        ?assertEqual(ok, file:write_file_info(CrashLog, FInfo0)),
                         ?assertEqual(3, lager_test_backend:count()),
                         lager_test_backend:pop(),
                         {_Level, _Time, Message,_Metadata} = lager_test_backend:pop(),
-                        ?assertEqual("Failed to reopen crash log crash_test.log with error: permission denied", lists:flatten(Message))
+                        ?assertEqual(
+                            "Failed to reopen crash log " ++ CrashLog ++ " with error: permission denied",
+                            lists:flatten(Message))
                 end
-            },
+            end}
+        end,
+        fun(CrashLog) ->
             {"unavailable files that are fixed at runtime should start having log messages written",
-                fun() ->
-                        {ok, FInfo} = file:read_file_info("crash_test.log"),
-                        OldPerms = FInfo#file_info.mode,
-                        file:write_file_info("crash_test.log", FInfo#file_info{mode = 0}),
-                        {ok, _} = ?MODULE:start_link("crash_test.log", 65535, 0, undefined, 0),
-                        ?assertEqual(1, lager_test_backend:count()),
-                        {_Level, _Time, Message,_Metadata} = lager_test_backend:pop(),
-                        ?assertEqual("Failed to open crash log file crash_test.log with error: permission denied", lists:flatten(Message)),
-                        file:write_file_info("crash_test.log", FInfo#file_info{mode = OldPerms}),
-                        sync_error_logger:error_msg("Test message~n"),
-                        _ = gen_event:which_handlers(error_logger),
-                        {ok, Bin} = file:read_file("crash_test.log"),
-                        ?assertMatch([_, "Test message\n"], re:split(Bin, "\n", [{return, list}, {parts, 2}]))
-                end
-            },
+            fun() ->
+                {ok, FInfo} = file:read_file_info(CrashLog, [raw]),
+                OldPerms = FInfo#file_info.mode,
+                file:write_file_info(CrashLog, FInfo#file_info{mode = 0}),
+                {ok, _} = ?MODULE:start_link(CrashLog, 65535, 0, undefined, 0, lager_rotator_default),
+                ?assertEqual(1, lager_test_backend:count()),
+                {_Level, _Time, Message,_Metadata} = lager_test_backend:pop(),
+                ?assertEqual(
+                    "Failed to open crash log file " ++ CrashLog ++ " with error: permission denied",
+                    lists:flatten(Message)),
+                file:write_file_info(CrashLog, FInfo#file_info{mode = OldPerms}),
+                sync_error_logger:error_msg("Test message~n"),
+                _ = gen_event:which_handlers(error_logger),
+                {ok, Bin} = file:read_file(CrashLog),
+                ?assertMatch([_, "Test message\n"], re:split(Bin, "\n", [{return, list}, {parts, 2}]))
+            end}
+        end,
+        fun(CrashLog) ->
             {"external logfile rotation/deletion should be handled",
-                fun() ->
-                        {ok, _} = ?MODULE:start_link("crash_test.log", 65535, 0, undefined, 0),
+            fun() ->
+                case os:type() of
+                    {win32, _} ->
+                        % Note: test is skipped on win32 due to the fact that a file can't be deleted or renamed
+                        % while a process has an open file handle referencing it
+                        ok;
+                    _ ->
+                        {ok, _} = ?MODULE:start_link(CrashLog, 65535, 0, undefined, 0, lager_rotator_default),
                         ?assertEqual(0, lager_test_backend:count()),
                         sync_error_logger:error_msg("Test message~n"),
                         _ = gen_event:which_handlers(error_logger),
-                        {ok, Bin} = file:read_file("crash_test.log"),
+                        {ok, Bin} = file:read_file(CrashLog),
                         ?assertMatch([_, "Test message\n"], re:split(Bin, "\n", [{return, list}, {parts, 2}])),
-                        file:delete("crash_test.log"),
-                        file:write_file("crash_test.log", ""),
+                        ?assertEqual(ok, file:delete(CrashLog)),
+                        ?assertEqual(ok, lager_util:safe_write_file(CrashLog, "")),
                         sync_error_logger:error_msg("Test message1~n"),
                         _ = gen_event:which_handlers(error_logger),
-                        {ok, Bin1} = file:read_file("crash_test.log"),
+                        {ok, Bin1} = file:read_file(CrashLog),
                         ?assertMatch([_, "Test message1\n"], re:split(Bin1, "\n", [{return, list}, {parts, 2}])),
-                        file:rename("crash_test.log", "crash_test.log.0"),
+                        file:rename(CrashLog, CrashLog ++ ".0"),
                         sync_error_logger:error_msg("Test message2~n"),
                         _ = gen_event:which_handlers(error_logger),
-                        {ok, Bin2} = file:read_file("crash_test.log"),
+                        {ok, Bin2} = file:read_file(CrashLog),
                         ?assertMatch([_, "Test message2\n"], re:split(Bin2, "\n", [{return, list}, {parts, 2}]))
                 end
-            }
-        ]
-    }.
+            end}
+        end
+    ]}.
 
 -endif.
 

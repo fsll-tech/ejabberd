@@ -5,7 +5,7 @@
 %%% Created : 3 May 2014 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -67,7 +67,7 @@ start_link() ->
 init([]) ->
     {ok, {{simple_one_for_one, 10, 1},
           [{undefined, {stun, start_link, []},
-            temporary, brutal_kill, worker, [stun]}]}}.
+            temporary, 5000, worker, [stun]}]}}.
 
 %%%===================================================================
 %%% Internal functions

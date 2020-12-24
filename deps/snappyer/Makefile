@@ -1,22 +1,15 @@
-PROJECT = snappyer
-PROJECT_DESCRIPTION = Snappy as nif for Erlang
-PROJECT_VERSION = 1.2.1
+.PHONY: clean compile tests hex-publish
 
-SP = 2
+all: compile
 
-CPPFLAGS = -Wno-sign-compare -Wno-unused-function
-LDFLAGS += -shared -lstdc++
+compile:
+	@rebar3 compile
 
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-CXXFLAGS = -O3 -arch x86_64
-LDFLAGS += -arch x86_64 -flat_namespace -undefined suppress
-endif
+tests:
+	@rebar3 eunit -v
 
-include erlang.mk
+clean:
+	@rebar3 clean
 
-vsn-check:
-	$(verbose) ./vsn-check.sh $(PROJECT_VERSION)
-
-hex-publish: distclean
+hex-publish: clean
 	rebar3 hex publish

@@ -13,14 +13,14 @@ peers for VoIP (for example using
 [Jingle](http://xmpp.org/about-xmpp/technology-overview/jingle/)) and
 [WebRTC](https://en.wikipedia.org/wiki/WebRTC).
 
-They are part of a more general negociation technique know as
+They are part of a more general negotiation technique know as
 [ICE](https://en.wikipedia.org/wiki/Interactive_Connectivity_Establishment)
 (Interactive Connectivity Establishment).
 
 To summarize:
 
 * A STUN server is used to get an external network address. It does
-  not serve as a relay for the mediat raffic.
+  not serve as a relay for the media traffic.
 * TURN servers are used to relay traffic if direct (peer to peer)
   connection fails.
 
@@ -43,12 +43,12 @@ You can trigger build with:
 
 The following sequence describe a STUN establishment.
 
-First, start the application and stun listener:
+First, start the application and stun listener at 127.0.0.1:
 
 ```
 1> application:start(stun).
 ok
-2> stun_listener:add_listener(3478, udp, []).
+2> stun_listener:add_listener({127, 0, 0, 1}, 3478, udp, []).
 ok
 ```
 

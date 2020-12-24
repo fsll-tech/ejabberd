@@ -5,7 +5,7 @@
 %%% Created : 20 Dec 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -22,12 +22,18 @@
 %%%----------------------------------------------------------------------
 
 -module(p1_sha).
+-on_load(load_nif/0).
 
 -author('alexey@process-one.net').
 
--export([load_nif/0,
-         sha/1, sha1/1, sha224/1, sha256/1,
-         sha384/1, sha512/1, to_hexlist/1]).
+-compile(no_native).
+
+-export([load_nif/0, sha/1, to_hexlist/1]).
+
+%% The following functions are deprecated.
+-export([sha1/1, sha224/1, sha256/1, sha384/1, sha512/1]).
+
+-deprecated([{sha1,1}, {sha224,1}, {sha256,1}, {sha384,1}, {sha512,1}]).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
@@ -37,16 +43,18 @@
 %%% API functions
 %%%===================================================================
 load_nif() ->
-    SOPath = p1_nif_utils:get_so_path(?MODULE, [fast_tls], "p1_sha"),
+    load_nif(p1_nif_utils:get_so_path(?MODULE, [fast_tls], "p1_sha")).
+
+load_nif(SOPath) ->
     case catch erlang:load_nif(SOPath, 0) of
-        ok ->
-            ok;
-        {error, {reload, _}} ->
-            %% Do not log warning when just attempting to reload nif.
-            ok;
-        Err ->
-            error_logger:warning_msg("unable to load sha NIF: ~p~n", [Err]),
-            Err
+	ok ->
+	    ok;
+	{error, {reload, _}} ->
+	    %% Do not log warning when just attempting to reload nif.
+	    ok;
+	Err ->
+	    error_logger:warning_msg("unable to load sha NIF: ~p~n", [Err]),
+	    Err
     end.
  
 -spec to_hexlist(iodata()) -> binary().
@@ -61,30 +69,27 @@ to_hexlist(_Text) ->
     erlang:nif_error(nif_not_loaded).
 
 sha(Text) ->
-    to_hexlist(sha1(Text)).
+    to_hexlist(crypto:hash(sha, Text)).
 
-sha1(_Text) ->
-    erlang:nif_error(nif_not_loaded).
+sha1(Text) ->
+    crypto:hash(sha, Text).
 
-sha224(_Text) ->
-    erlang:nif_error(nif_not_loaded).
+sha224(Text) ->
+    crypto:hash(sha224, Text).
 
-sha256(_Text) ->
-    erlang:nif_error(nif_not_loaded).
+sha256(Text) ->
+    crypto:hash(sha256, Text).
 
-sha384(_Text) ->
-    erlang:nif_error(nif_not_loaded).
+sha384(Text) ->
+    crypto:hash(sha384, Text).
 
-sha512(_Text) ->
-    erlang:nif_error(nif_not_loaded).
+sha512(Text) ->
+    crypto:hash(sha512, Text).
 
 %%%===================================================================
 %%% Unit tests
 %%%===================================================================
 -ifdef(TEST).
-
-load_nif_test() ->
-    ?assertEqual(ok, load_nif()).
 
 sha1_test() ->
     ?assertEqual(

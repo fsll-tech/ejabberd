@@ -5,7 +5,7 @@
 %%% Created : 9 Jan 2011 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -26,14 +26,16 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, add_listener/3, del_listener/2, start_listener/4]).
+-export([start_link/0, add_listener/4, del_listener/3, start_listener/5]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-include("stun_logger.hrl").
+
 -define(TCP_SEND_TIMEOUT, 10000).
--record(state, {listeners = dict:new()}).
+-record(state, {listeners = #{}}).
 
 %%%===================================================================
 %%% API
@@ -41,11 +43,11 @@
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
-add_listener(Port, Transport, Opts) ->
-    gen_server:call(?MODULE, {add_listener, Port, Transport, Opts}).
+add_listener(IP, Port, Transport, Opts) ->
+    gen_server:call(?MODULE, {add_listener, IP, Port, Transport, Opts}).
 
-del_listener(Port, Transport) ->
-    gen_server:call(?MODULE, {del_listener, Port, Transport}).
+del_listener(IP, Port, Transport) ->
+    gen_server:call(?MODULE, {del_listener, IP, Port, Transport}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -53,38 +55,41 @@ del_listener(Port, Transport) ->
 init([]) ->
     {ok, #state{}}.
 
-handle_call({add_listener, Port, Transport, Opts}, _From, State) ->
-    case dict:find({Port, Transport}, State#state.listeners) of
+handle_call({add_listener, IP, Port, Transport, Opts}, _From, State) ->
+    case maps:find({IP, Port, Transport}, State#state.listeners) of
 	{ok, _} ->
 	    Err = {error, already_started},
 	    {reply, Err, State};
 	error ->
 	    {Pid, MRef} = spawn_monitor(?MODULE, start_listener,
-					[Port, Transport, Opts, self()]),
+					[IP, Port, Transport, Opts, self()]),
 	    receive
 		{'DOWN', MRef, _Type, _Object, Info} ->
 		    Res = {error, Info},
-		    format_listener_error(Port, Transport, Opts, Res),
+		    format_listener_error(IP, Port, Transport, Opts, Res),
 		    {reply, Res, State};
 		{Pid, Reply} ->
 		    case Reply of
 			{error, _} = Err ->
-			    format_listener_error(Port, Transport, Opts, Err),
+			    format_listener_error(IP, Port, Transport, Opts,
+						  Err),
 			    {reply, Reply, State};
 			ok ->
-			    Listeners = dict:store(
-					  {Port, Transport}, {MRef, Pid, Opts},
+			    Listeners = maps:put(
+					  {IP, Port, Transport},
+					  {MRef, Pid, Opts},
 					  State#state.listeners),
 			    {reply, ok, State#state{listeners = Listeners}}
 		    end
 	    end
     end;
-handle_call({del_listener, Port, Transport}, _From, State) ->
-    case dict:find({Port, Transport}, State#state.listeners) of
+handle_call({del_listener, IP, Port, Transport}, _From, State) ->
+    case maps:find({IP, Port, Transport}, State#state.listeners) of
 	{ok, {MRef, Pid, _Opts}} ->
 	    catch erlang:demonitor(MRef, [flush]),
 	    catch exit(Pid, kill),
-	    Listeners = dict:erase({Port, Transport}, State#state.listeners),
+	    Listeners = maps:remove({IP, Port, Transport},
+				    State#state.listeners),
 	    {reply, ok, State#state{listeners = Listeners}};
 	error ->
 	    {reply, {error, notfound}, State}
@@ -97,10 +102,11 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({'DOWN', MRef, _Type, _Pid, Info}, State) ->
-    Listeners = dict:filter(
-		  fun({Port, Transport}, {Ref, _, _}) when Ref == MRef ->
-			  error_logger:error_msg("listener on ~p/~p failed: ~p",
-						 [Port, Transport, Info]),
+    Listeners = maps:filter(
+		  fun({IP, Port, Transport}, {Ref, _, _}) when Ref == MRef ->
+			  ?LOG_ERROR("Listener on ~s (~s) failed: ~p",
+				     [stun_logger:encode_addr({IP, Port}),
+				      Transport, Info]),
 			  false;
 		     (_, _) ->
 			  true
@@ -118,13 +124,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-start_listener(Port, Transport, Opts, Owner)
+start_listener(IP, Port, Transport, Opts, Owner)
   when Transport == tcp; Transport == tls ->
     OptsWithTLS = case Transport of
 		      tls -> [tls|Opts];
 		      tcp -> Opts
 		  end,
     case gen_tcp:listen(Port, [binary,
+                               {ip, IP},
                                {packet, 0},
                                {active, false},
                                {reuseaddr, true},
@@ -139,12 +146,14 @@ start_listener(Port, Transport, Opts, Owner)
         Err ->
             Owner ! {self(), Err}
     end;
-start_listener(Port, udp, Opts, Owner) ->
+start_listener(IP, Port, udp, Opts, Owner) ->
     case gen_udp:open(Port, [binary,
+			     {ip, IP},
 			     {active, false},
 			     {reuseaddr, true}]) of
 	{ok, Socket} ->
 	    Owner ! {self(), ok},
+	    stun_logger:set_metadata(listener, udp),
 	    Opts1 = stun:udp_init(Socket, Opts),
 	    udp_recv(Socket, Opts1);
 	Err ->
@@ -152,22 +161,29 @@ start_listener(Port, udp, Opts, Owner) ->
     end.
 
 accept(ListenSocket, Opts) ->
+    Transport = case proplists:get_bool(tls, Opts) of
+		    true -> tls;
+		    false -> tcp
+		end,
+    ID = stun_logger:make_id(),
+    stun_logger:set_metadata(listener, Transport, ID),
     case gen_tcp:accept(ListenSocket) of
         {ok, Socket} ->
             case {inet:peername(Socket),
                   inet:sockname(Socket)} of
                 {{ok, {PeerAddr, PeerPort}}, {ok, {Addr, Port}}} ->
-                    error_logger:info_msg("accepted connection: ~s:~p -> ~s:~p",
-					  [inet_parse:ntoa(PeerAddr), PeerPort,
-					   inet_parse:ntoa(Addr), Port]),
-                    case stun:start({gen_tcp, Socket}, Opts) of
+		    ?LOG_INFO("Accepting connection: ~s -> ~s",
+			      [stun_logger:encode_addr({PeerAddr, PeerPort}),
+			       stun_logger:encode_addr({Addr, Port})]),
+		    case stun:start({gen_tcp, Socket},
+				    [{session_id, ID}|Opts]) of
                         {ok, Pid} ->
                             gen_tcp:controlling_process(Socket, Pid);
                         Err ->
                             Err
                     end;
                 Err ->
-                    error_logger:error_msg("unable to fetch peername: ~p", [Err]),
+                    ?LOG_ERROR("Cannot fetch peername: ~p", [Err]),
                     Err
             end,
             accept(ListenSocket, Opts);
@@ -180,24 +196,25 @@ udp_recv(Socket, Opts) ->
 	{ok, {Addr, Port, Packet}} ->
 	    case catch stun:udp_recv(Socket, Addr, Port, Packet, Opts) of
 		{'EXIT', Reason} ->
-		    error_logger:error_msg("failed to process UDP packet:~n"
-					   "** Source: {~p, ~p}~n"
-					   "** Reason: ~p~n** Packet: ~p",
-					   [Addr, Port, Reason, Packet]),
+		    ?LOG_ERROR("Cannot process UDP packet:~n"
+			       "** Source: ~s~n"
+			       "** Reason: ~p~n** Packet: ~p",
+			       [stun_logger:encode_addr({Addr, Port}), Reason,
+				Packet]),
 		    udp_recv(Socket, Opts);
 		NewOpts ->
 		    udp_recv(Socket, NewOpts)
 	    end;
 	{error, Reason} ->
-	    error_logger:error_msg(
-	      "unexpected UDP error: ~s", [inet:format_error(Reason)]),
+	    ?LOG_ERROR("Unexpected UDP error: ~s", [inet:format_error(Reason)]),
 	    erlang:error(Reason)
     end.
 
-format_listener_error(Port, Transport, Opts, Err) ->
-    error_logger:error_msg("failed to start listener:~n"
-			   "** Port: ~p~n"
-			   "** Transport: ~p~n"
-			   "** Options: ~p~n"
-			   "** Reason: ~p",
-			   [Port, Transport, Opts, Err]).
+format_listener_error(IP, Port, Transport, Opts, Err) ->
+    ?LOG_ERROR("Cannot start listener:~n"
+	       "** IP: ~s~n"
+	       "** Port: ~B~n"
+	       "** Transport: ~s~n"
+	       "** Options: ~p~n"
+	       "** Reason: ~p",
+	       [stun_logger:encode_addr(IP), Port, Transport, Opts, Err]).

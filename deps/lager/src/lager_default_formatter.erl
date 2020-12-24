@@ -57,15 +57,11 @@
 format(Msg,[], Colors) ->
     format(Msg, [{eol, "\n"}], Colors);
 format(Msg,[{eol, EOL}], Colors) ->
-    format(Msg,
-        [date, " ", time, " ", color, "[", severity, "] ",
-            {pid, ""},
-            {module, [
-                    {pid, ["@"], ""},
-                    module,
-                    {function, [":", function], ""},
-                    {line, [":",line], ""}], ""},
-            " ", message, EOL], Colors);
+    Config = case application:get_env(lager, metadata_whitelist) of
+        undefined -> config(EOL, []);
+        {ok, Whitelist} -> config(EOL, Whitelist)
+    end,
+    format(Msg, Config, Colors);
 format(Message,Config,Colors) ->
     [ case V of
         color -> output_color(Message,Colors);
@@ -86,8 +82,12 @@ output(time,Msg) ->
     T;
 output(severity,Msg) ->
     atom_to_list(lager_msg:severity(Msg));
+output(severity_upper, Msg) ->
+    uppercase_severity(lager_msg:severity(Msg));
 output(blank,_Msg) ->
     output({blank," "},_Msg);
+output(node, _Msg) ->
+    output({node, atom_to_list(node())},_Msg);
 output({blank,Fill},_Msg) ->
     Fill;
 output(sev,Msg) ->
@@ -98,6 +98,10 @@ output(metadata, Msg) ->
 output({metadata, IntSep, FieldSep}, Msg) ->
     MD = lists:keysort(1, lager_msg:metadata(Msg)),
     string:join([io_lib:format("~s~s~p", [K, IntSep, V]) || {K, V} <- MD], FieldSep);
+output({pterm, Key}, Msg) ->
+    output({pterm, Key, ""}, Msg);
+output({pterm, Key, Default}, _Msg) ->
+    make_printable(maybe_get_persistent_term(Key, Default));
 output(Prop,Msg) when is_atom(Prop) ->
     Metadata = lager_msg:metadata(Msg),
     make_printable(get_metadata(Prop,Metadata,<<"Undefined">>));
@@ -136,6 +140,8 @@ output(severity, Msg, Width) ->
 output(sev,Msg, _Width) ->
     %% Write brief acronym for the severity level (e.g. debug -> $D)
     [lager_util:level_to_chr(lager_msg:severity(Msg))];
+output(node, Msg, _Width) ->
+    output({node, atom_to_list(node())}, Msg, _Width);
 output(blank,_Msg, _Width) ->
     output({blank, " "},_Msg, _Width);
 output({blank, Fill},_Msg, _Width) ->
@@ -145,6 +151,10 @@ output(metadata, Msg, _Width) ->
 output({metadata, IntSep, FieldSep}, Msg, _Width) ->
     MD = lists:keysort(1, lager_msg:metadata(Msg)),
     [string:join([io_lib:format("~s~s~p", [K, IntSep, V]) || {K, V} <- MD], FieldSep)];
+output({pterm, Key}, Msg, Width) ->
+    output({pterm, Key, ""}, Msg, Width);
+output({pterm, Key, Default}, _Msg, _Width) ->
+    make_printable(maybe_get_persistent_term(Key, Default));
 
 output(Prop, Msg, Width) when is_atom(Prop) ->
     Metadata = lager_msg:metadata(Msg),
@@ -183,6 +193,29 @@ make_printable(A,{Align,W}) when is_integer(W) ->
 
 make_printable(A,_W) -> make_printable(A).
 
+%% persistent term was introduced in OTP 21.2, so
+%% if we're running on an older OTP, just return the
+%% default value.
+-ifdef(OTP_RELEASE).
+maybe_get_persistent_term(Key, Default) ->
+    try
+        persistent_term:get(Key, Default)
+    catch
+        _:undef -> Default
+    end.
+-else.
+maybe_get_persistent_term(_Key, Default) -> Default.
+-endif.
+
+run_function(Function, Default) ->
+    try Function() of
+        Result ->
+            Result
+    catch
+        _:_ ->
+          Default
+    end.
+
 get_metadata(Key, Metadata) ->
     get_metadata(Key, Metadata, undefined).
 
@@ -190,9 +223,47 @@ get_metadata(Key, Metadata, Default) ->
     case lists:keyfind(Key, 1, Metadata) of
         false ->
             Default;
+        {Key, Value} when is_function(Value) ->
+            run_function(Value, Default);
         {Key, Value} ->
             Value
     end.
+
+config(EOL, []) ->
+    [
+        date, " ", time, " ", color, "[", severity, "] ",
+        {pid, ""},
+        {module, [
+            {pid, ["@"], ""},
+            module,
+            {function, [":", function], ""},
+            {line, [":",line], ""}], ""},
+        " ", message, EOL
+    ];
+config(EOL, MetaWhitelist) ->
+    [
+        date, " ", time, " ", color, "[", severity, "] ",
+        {pid, ""},
+        {module, [
+            {pid, ["@"], ""},
+            module,
+            {function, [":", function], ""},
+            {line, [":",line], ""}], ""},
+        " "
+    ] ++
+    [{M, [atom_to_list(M), "=", M, " "], ""}|| M <- MetaWhitelist] ++
+    [message, EOL].
+
+
+
+uppercase_severity(debug) -> "DEBUG";
+uppercase_severity(info) -> "INFO";
+uppercase_severity(notice) -> "NOTICE";
+uppercase_severity(warning) -> "WARNING";
+uppercase_severity(error) -> "ERROR";
+uppercase_severity(critical) -> "CRITICAL";
+uppercase_severity(alert) -> "ALERT";
+uppercase_severity(emergency) -> "EMERGENCY".
 
 -ifdef(TEST).
 date_time_now() ->
@@ -383,11 +454,118 @@ basic_test_() ->
                     []),
                     [{x,"",[time]}, {x,"",[date],20},blank,{x,"",[metadata],30},blank,{x,"",[sev],10},message, {message,message,"", {right,20}}]
                 )))
+        },
+        {"Uppercase Severity Formatting - DEBUG",
+            ?_assertEqual(<<"DEBUG Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            debug,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - INFO",
+            ?_assertEqual(<<"INFO Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            info,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - NOTICE",
+            ?_assertEqual(<<"NOTICE Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            notice,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - WARNING",
+            ?_assertEqual(<<"WARNING Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            warning,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - ERROR",
+            ?_assertEqual(<<"ERROR Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            error,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - CRITICAL",
+            ?_assertEqual(<<"CRITICAL Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            critical,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - ALERT",
+            ?_assertEqual(<<"ALERT Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            alert,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"Uppercase Severity Formatting - EMERGENCY",
+            ?_assertEqual(<<"EMERGENCY Simplist Format">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            emergency,
+                            [{pid, self()}],
+                            []),
+                        [severity_upper, " Simplist Format"])))
+        },
+        {"pterm presence test",
+            %% skip test on OTP < 21
+            case list_to_integer(erlang:system_info(otp_release)) >= 21 of
+                true ->
+                    ?_assertEqual(<<"Pterm is: something">>,
+                      begin
+                        persistent_term:put(thing, something),
+                        Ret = iolist_to_binary(format(lager_msg:new("Message",
+                                    Now,
+                                    emergency,
+                                    [{pid, self()}],
+                                    []),
+                                ["Pterm is: ", {pterm, thing}])),
+                        persistent_term:erase(thing),
+                        Ret
+                      end);
+                false -> ?_assert(true)
+            end
+        },
+        {"pterm absence test",
+            ?_assertEqual(<<"Pterm is: nothing">>,
+                iolist_to_binary(format(lager_msg:new("Message",
+                            Now,
+                            emergency,
+                            [{pid, self()}],
+                            []),
+                        ["Pterm is: ", {pterm, thing, "nothing"}])))
+        },
+        {"node formatting basic",
+            begin
+                [N, "foo"] = format(lager_msg:new("Message",
+                                                  Now,
+                                                  info,
+                                                  [{pid, self()}],
+                                                  []),
+                                    [node, "foo"]),
+                ?_assertNotMatch(nomatch, re:run(N, <<"@">>))
+            end
         }
-
-
-
-
     ].
 
 -endif.

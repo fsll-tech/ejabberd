@@ -5,7 +5,7 @@
 %%% Created : 14 Jul 2009 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -122,7 +122,9 @@ do_connect(URIorVia, Opts) ->
                         tcp ->
                             esip_socket:connect(AddrsPorts, Opts);
 			tls ->
-			    esip_socket:connect(AddrsPorts, [tls|Opts]);
+			    SNI = get_server_name(URIorVia),
+			    esip_socket:connect(AddrsPorts,
+						[tls, {sni, SNI}|Opts]);
 			udp ->
                             case get_udp_listener() of
                                 {ok, UDPSock} ->
@@ -606,3 +608,8 @@ get_certfile(Opts) ->
 	_ ->
 	    undefined
     end.
+
+get_server_name(#uri{host = Host}) ->
+    esip_codec:to_lower(Host);
+get_server_name(#via{host = Host}) ->
+    esip_codec:to_lower(Host).

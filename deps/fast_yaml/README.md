@@ -1,6 +1,6 @@
 # Fast YAML
 
-[![Build Status](https://travis-ci.org/processone/fast_yaml.svg?branch=master)](https://travis-ci.org/processone/fast_yaml) [![Coverage Status](https://coveralls.io/repos/processone/fast_yaml/badge.svg?branch=master&service=github)](https://coveralls.io/github/processone/fast_yaml?branch=master) [![Hex version](https://img.shields.io/hexpm/v/fast_yaml.svg "Hex version")](https://hex.pm/packages/fast_yaml)
+![Erlang CI](https://github.com/processone/fast_yaml/workflows/Erlang%20CI/badge.svg) [![Hex version](https://img.shields.io/hexpm/v/fast_yaml.svg "Hex version")](https://hex.pm/packages/fast_yaml)
 
 Fast YAML is an Erlang wrapper for
 [libyaml](http://pyyaml.org/wiki/LibYAML) "C" library.
@@ -13,6 +13,8 @@ It is designed to be fast and efficient.
 
 Fast YAML depends on native LibYaml library. You need development
 headers for LibYaml library to build it.
+
+The minimum required Erlang/OTP version is 18.0
 
 ### Generic build
 
@@ -48,7 +50,13 @@ ok
 
 2> fast_yaml:decode(<<"a: 1\nb: -3.0">>).
 {ok,[[{<<"a">>,1},{<<"b">>,-3.0}]]}
+```
 
+## Option `plain_as_atom`
+
+Converts all unquoted YAML values to atoms
+
+```erlang
 3> fast_yaml:decode(<<"a: 1\nb: -3.0">>, [{plain_as_atom, true}]).
 {ok,[[{a,1},{b,-3.0}]]}
 
@@ -72,6 +80,35 @@ ok
       [{step,<<"id001">>}],
       [{step,<<"id002">>}]]]}
 ```
+
+## Option `sane_scalars`
+
+Converts the following scalar values to their Erlang-native data type:
+
+`"null"` → `undefined`
+`"true"` → `true`
+`"false"` → `false`
+
+Integer and float values also get converted. All other scalar values
+stay binaries. Key in mappings also stay binary and never get coerced
+into int / float / atom .
+
+An unquoted mapping value that is an empty string gets converted into
+`undefined`. (e.g. the string `"foo:"` decodes as `[{<<"foo">>, undefined}]`)
+
+## Option `maps`
+
+Convert YAML mappings into Erlang maps.
+
+
+```erlang
+7> fast_yaml:decode(<<"a: true\nb: -3.0\nc: string">>, [{maps, true}]).
+{ok, [#{"a" => "true", "b" => -3.0, "c" => "string"}]}
+```
+
+
+> For compatibility with the `yamerl` and `YamlElixir` libraries, use the `[sane_scalars, maps]` options.
+
 
 ## Development
 

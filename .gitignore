@@ -43,10 +43,11 @@ src/XmppAddr.asn1db
 src/XmppAddr.erl
 src/eldap_filter_yecc.erl
 
+_build/
+
 # package ignore (optional)
 # *.jar
 # *.war
 # *.zip
 # *.tar
 # *.tar.gz
-

@@ -1,5 +1,5 @@
 %%%
-%%%   Copyright (c) 2015-2017 Klarna AB
+%%%   Copyright (c) 2015-2018 Klarna Bank AB (publ)
 %%%
 %%%   Licensed under the Apache License, Version 2.0 (the "License");
 %%%   you may not use this file except in compliance with the License.
@@ -15,9 +15,7 @@
 %%%
 
 %%%=============================================================================
-%%% @doc brod producers supervisor
-%%%
-%%% @copyright 2015 Klarna AB
+%%% @private brod producers supervisor
 %%% @end
 %%%=============================================================================
 
@@ -65,7 +63,8 @@ start_producer(SupPid, ClientPid, TopicName, Config) ->
 %% @doc Dynamically stop a per-topic supervisor
 -spec stop_producer(pid(), brod:topic()) -> ok | {}.
 stop_producer(SupPid, TopicName) ->
-  supervisor3:terminate_child(SupPid, TopicName).
+  supervisor3:terminate_child(SupPid, TopicName),
+  supervisor3:delete_child(SupPid, TopicName).
 
 %% @doc Find a brod_producer process pid running under ?PARTITIONS_SUP.
 -spec find_producer(pid(), brod:topic(), brod:partition()) ->

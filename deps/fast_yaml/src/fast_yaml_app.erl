@@ -5,7 +5,7 @@
 %%% Created : 7 Aug 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -32,12 +32,7 @@
 %%% Application callbacks
 %%%===================================================================
 start(_StartType, _StartArgs) ->
-    case fast_yaml:load_nif() of
-        ok ->
-            fast_yaml_sup:start_link();
-        Err ->
-            Err
-    end.
+    fast_yaml_sup:start_link().
 
 stop(_State) ->
     ok.

@@ -5,7 +5,7 @@
 %%% Created : 20 Dec 2010 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@
 %%%----------------------------------------------------------------------
 
 -module(esip_codec).
+
+-compile(no_native).
 
 %% API
 -export([start/0,
@@ -1349,10 +1351,10 @@ test_loop() ->
     io:format("~n== Estimate: ~p~n", [T div N]).
 
 test_loop(P, Msg, N) ->
-    test_loop(P, Msg, N, now()).
+    test_loop(P, Msg, N, p1_time_compat:monotonic_time()).
 
 test_loop(P, _, 0, T) ->
-    P ! {ok, timer:now_diff(now(), T)};
+    P ! {ok, p1_time_compat:monotonic_time() - T};
 test_loop(P, Msg, N, T) ->
     decode(Msg),
     test_loop(P, Msg, N-1, T).

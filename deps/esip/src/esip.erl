@@ -5,7 +5,7 @@
 %%% Created : 14 Jul 2009 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2016 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -114,6 +114,8 @@
 -callback locate(#sip{}) -> #uri{} | #via{} | ok.
 -callback data_in(iodata(), #sip_socket{}) -> any().
 -callback data_out(iodata(), #sip_socket{}) -> any().
+
+-export_type([sip/0, uri/0, via/0, dialog_id/0, sip_socket/0]).
 
 %%====================================================================
 %% API
@@ -341,7 +343,7 @@ set_key(Key, Val, Keys) ->
     Res = lists:foldl(
             fun({K, V}, Acc) ->
                     case is_equal(K, Key) of
-                        true ->                          
+                        true ->
                             Acc;
                         false ->
                             [{K, V}|Acc]
@@ -540,7 +542,7 @@ check_auth({Type, Params}, Method, Body, Password) ->
     end.
 
 make_hexstr(N) ->
-    hex_encode(crypto:rand_bytes(N)).
+    hex_encode(rand_bytes(N)).
 
 hex_encode(Data) ->
     << <<(esip_codec:to_hex(X))/binary>> || <<X>> <= Data >>.
@@ -751,22 +753,20 @@ warning(Code) when Code > 300, Code < 400 -> <<"\"\"">>.
 %% gen_server callbacks
 %%====================================================================
 init([]) ->
-    {A, B, C} = now(),
-    random:seed(A, B, C),
     ets:new(esip_config, [named_table, public]),
     set_config([]),
-    NodeID = list_to_binary(integer_to_list(random:uniform(1 bsl 32))),
+    NodeID = list_to_binary(integer_to_list(rand_uniform(1 bsl 32))),
     register_node(NodeID),
     {ok, #state{node_id = NodeID}}.
 
 handle_call(make_tag, _From, State) ->
-    {reply, {State#state.node_id, random:uniform(1 bsl 32)}, State};
+    {reply, {State#state.node_id, rand_uniform(1 bsl 32)}, State};
 handle_call(make_branch, _From, State) ->
-    {reply, random:uniform(1 bsl 48), State};
+    {reply, rand_uniform(1 bsl 48), State};
 handle_call(make_callid, _From, State) ->
-    {reply, random:uniform(1 bsl 48), State};
+    {reply, rand_uniform(1 bsl 48), State};
 handle_call(make_cseq, _From, State) ->
-    {reply, random:uniform(1 bsl 10), State};
+    {reply, rand_uniform(1 bsl 10), State};
 handle_call(stop, _From, State) ->
     {stop, normal, State};
 handle_call(_Request, _From, State) ->
@@ -863,3 +863,19 @@ compute_digest(Nonce, CNonce, NC, QOP, Algo, Realm,
                $:, unquote(Nonce),
                $:, md5_digest(A2)])
     end.
+
+-ifdef(STRONG_RAND_BYTES).
+rand_bytes(N) ->
+    crypto:strong_rand_bytes(N).
+-else.
+rand_bytes(N) ->
+    crypto:rand_bytes(N).
+-endif.
+
+-ifdef(RAND_UNIFORM).
+rand_uniform(N) ->
+    rand:uniform(N).
+-else.
+rand_uniform(N) ->
+    crypto:rand_uniform(1, N).
+-endif.

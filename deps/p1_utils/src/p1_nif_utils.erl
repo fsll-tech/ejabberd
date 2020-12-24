@@ -6,7 +6,7 @@
 %%% Created : 7 Oct 2015 by Paweł Chmielowski <pawel@process-one.net>
 %%%
 %%%
-%%% Copyright (C) 2002-2019 ProcessOne, SARL. All Rights Reserved.
+%%% Copyright (C) 2002-2020 ProcessOne, SARL. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License, Version 2.0 (the "License");
 %%% you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ get_so_path(ModuleName, AppNames, SoName) ->
             SoFName = filename:join(["priv", "lib", SoName ++ Ext]),
             LPath = first_match(fun(Path) ->
                                         P = case filename:basename(Path) of
-                                                ebin -> filename:dirname(Path);
+                                                "ebin" -> filename:dirname(Path);
                                                 _ -> Path
                                             end,
                                         case filelib:is_file(filename:join([P, SoFName])) of

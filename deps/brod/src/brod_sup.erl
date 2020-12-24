@@ -1,5 +1,5 @@
 %%%
-%%%   Copyright (c) 2015-2017 Klarna AB
+%%%   Copyright (c) 2015-2018 Klarna Bank AB (publ)
 %%%
 %%%   Licensed under the Apache License, Version 2.0 (the "License");
 %%%   you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 %%%
 
 %%%=============================================================================
-%%% @doc brod supervisor
+%%% @private brod supervisor
 %%%
 %%% Hierarchy:
 %%%   brod_sup (one_for_one)
@@ -52,7 +52,6 @@
 %%%     |     |...
 %%%     |...
 %%%
-%%% @copyright 2015 Klarna AB
 %%% @end
 %%%=============================================================================
 
@@ -88,7 +87,6 @@
 %%    , [ {client_1 %% unique client ID
 %%        , [ {endpoints, [{"localhost", 9092}]}
 %%          , {restart_delay_seconds, 10}
-%%          , {max_metadata_sock_retry, 1}
 %%          , {get_metadata_timeout_seconds, 5}
 %%          , {reconnect_cool_down_seconds, 1}
 %%          , {allow_topic_auto_creation, true}
@@ -126,6 +124,8 @@ find_client(Client) ->
 
 %% @doc supervisor3 callback
 init(clients_sup) ->
+  %% start and link it to root supervisor
+  {ok, _} = brod_kafka_apis:start_link(),
   Clients = application:get_env(brod, clients, []),
   ClientSpecs =
     lists:map(fun({ClientId, Args}) ->
