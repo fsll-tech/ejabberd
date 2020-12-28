@@ -1,6 +1,8 @@
 %{
   "brod": {:hex, :brod, "3.15.1", "073b0e16f4193291a05e01ae36351ddba1bda85ad4f90f66566c8123a335150e", [:rebar3], [{:kafka_protocol, "2.3.6", [hex: :kafka_protocol, repo: "hexpm", optional: false]}, {:supervisor3, "1.1.11", [hex: :supervisor3, repo: "hexpm", optional: false]}], "hexpm", "170216364cb9c72201ab59416ec7283d5e3fc094406b03210df6be0347234c4e"},
   "cache_tab": {:hex, :cache_tab, "1.0.26", "6f6086ac80b797f54a68773d9d782e054877e217f8f1e2fbc6deb1557cc3e26a", [:rebar3], [{:p1_utils, "1.0.21", [hex: :p1_utils, repo: "hexpm", optional: false]}], "hexpm", "a7f0a03e3a9d6275e4a7583a1f3088e6764dd1e362464eaa8e2fcca9c3b235c3"},
+  "cowboy": {:hex, :cowboy, "1.0.4", "a324a8df9f2316c833a470d918aaf73ae894278b8aa6226ce7a9bf699388f878", [:make, :rebar], [{:cowlib, "~> 1.0.0", [hex: :cowlib, repo: "hexpm", optional: false]}, {:ranch, "~> 1.0", [hex: :ranch, repo: "hexpm", optional: false]}], "hexpm", "6a0edee96885fae3a8dd0ac1f333538a42e807db638a9453064ccfdaa6b9fdac"},
+  "cowlib": {:hex, :cowlib, "1.0.2", "9d769a1d062c9c3ac753096f868ca121e2730b9a377de23dec0f7e08b1df84ee", [:make], [], "hexpm", "db622da03aa039e6366ab953e31186cc8190d32905e33788a1acb22744e6abd2"},
   "crc32cer": {:hex, :crc32cer, "0.1.4", "a656dff19474d1a1fc5bb0081610ab6b0695b23affc47fa90abeb079a8ef9752", [:rebar3], [], "hexpm", "964735a5422cf65bbc5354860a560fff546f0026f83f8860525bd58ab5bade5d"},
   "earmark_parser": {:hex, :earmark_parser, "1.4.12", "b245e875ec0a311a342320da0551da407d9d2b65d98f7a9597ae078615af3449", [:mix], [], "hexpm", "711e2cc4d64abb7d566d43f54b78f7dc129308a63bc103fbd88550d2174b3160"},
   "eredis": {:hex, :eredis, "1.2.0", "0b8e9cfc2c00fa1374cd107ea63b49be08d933df2cf175e6a89b73dd9c380de4", [:rebar3], [], "hexpm", "d9b5abef2c2c8aba8f32aa018203e0b3dc8b1157773b254ab1d4c2002317f1e1"},
@@ -24,6 +26,8 @@
   "p1_oauth2": {:hex, :p1_oauth2, "0.6.8", "22b859f3694da30c45722fae860922150f74cfb149ef6176a67c514093238917", [:rebar3], [], "hexpm", "12a476d809f3123098948ee95676198008e96afbc433070a1382e5aa3d2a7b93"},
   "p1_pgsql": {:hex, :p1_pgsql, "1.1.10", "e4b19c9768ef4047f9c56090a91bfefc7337abb3809a28aa4a6538eef6ad76b0", [:rebar3], [], "hexpm", "5458c0db9e47425f8cc1f592356a29359267c624785b316b34a46ad7439e9367"},
   "p1_utils": {:hex, :p1_utils, "1.0.21", "9d6244bbd4af881e85af71655e8be5720b5b965b1bdd51a35c7871fd4142af9a", [:rebar3], [], "hexpm", "4b9b90e5863f5fed17f06427ba99b2dc37b216e4dd1308891f0903745e2fccbd"},
+  "poolboy": {:hex, :poolboy, "1.5.2", "392b007a1693a64540cead79830443abf5762f5d30cf50bc95cb2c1aaafa006b", [:rebar3], [], "hexpm", "dad79704ce5440f3d5a3681c8590b9dc25d1a561e8f5a9c995281012860901e3"},
+  "ranch": {:hex, :ranch, "1.7.1", "6b1fab51b49196860b733a49c07604465a47bdb78aa10c1c16a3d199f7f8c881", [:rebar3], [], "hexpm", "451d8527787df716d99dc36162fca05934915db0b6141bbdac2ea8d3c7afc7d7"},
   "samerlib": {:git, "https://github.com/processone/samerlib", "fbbba035b1548ac4e681df00d61bf609645333a0", [tag: "0.8.0c"]},
   "snappyer": {:hex, :snappyer, "1.2.5", "9154b9ac84031f0a799f72a4aa87df23ab2193b5631475fa2cdc304382d2df77", [:rebar3], [], "hexpm", "d2adc26a81efd5f138397a38a0bb545188d302972721f8be0de37fa452c8aed7"},
   "sqlite3": {:hex, :sqlite3, "1.1.9", "10090161893843c9839d884855cafbb33c8ee3a2d6597443d66e6f94144dfd79", [:rebar3], [], "hexpm", "148ef74ee796efc13ffc6bb0e7f5feeb050f425e7335ff02c7415ca86819c0d0"},

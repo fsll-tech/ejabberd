@@ -60,6 +60,8 @@ defmodule Ejabberd.Mixfile do
   defp deps do
     [
       {:lager, "~> 3.2"},
+      {:cowboy, "~> 1.0.1"},
+      {:poolboy, "~> 1.5"},
       {:p1_utils, "~> 1.0"},
       {:cache_tab, "~> 1.0"},
       {:stringprep, "~> 1.0"},
