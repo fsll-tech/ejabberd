@@ -79,8 +79,11 @@ defmodule Ejabberd.Mixfile do
       {:eredis, "~> 1.0"},
       {:brod, "~> 3.15"},
       {:ex_doc, ">= 0.0.0", only: :dev},
-      {:meck, "~> 0.8.4", only: :test},
-      {:moka, github: "processone/moka", tag: "1.0.5c", only: :test}
+      {:meck, "~> 0.8.4", only: :test, override: true},
+      {:moka, github: "processone/moka", tag: "1.0.5c", only: :test},
+      {:protobuffs, github: "processone/erlang_protobuffs"},
+      {:recon_ex, "~> 0.9.1"},
+      {:rfc4627_jsonrpc, github: "tonyg/erlang-rfc4627"}
     ]
   end
 
