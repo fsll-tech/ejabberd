@@ -1,9 +1,0 @@
-{application,stun,
-             [{description,"STUN and TURN library for Erlang / Elixir"},
-              {vsn,"1.0.40"},
-              {modules,[]},
-              {registered,[]},
-              {applications,[kernel,stdlib,fast_tls,p1_utils]},
-              {mod,{stun_app,[]}},
-              {licenses,["Apache 2.0"]},
-              {links,[{"Github","https://github.com/processone/stun"}]}]}.
