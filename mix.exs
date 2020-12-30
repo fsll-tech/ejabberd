@@ -83,7 +83,9 @@ defmodule Ejabberd.Mixfile do
       {:moka, github: "processone/moka", tag: "1.0.5c", only: :test},
       {:protobuffs, github: "processone/erlang_protobuffs"},
       {:recon_ex, "~> 0.9.1"},
-      {:rfc4627_jsonrpc, github: "tonyg/erlang-rfc4627"}
+      {:rfc4627_jsonrpc, github: "tonyg/erlang-rfc4627"},
+      {:distillery, "~> 2.1"},
+      {:credo, "~> 0.5", only: [:dev, :test]}
     ]
   end
 
